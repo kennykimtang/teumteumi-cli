@@ -15,7 +15,7 @@
  *   remove           설치 원복(기존 statusLine 복원). 적립 데이터(~/.teum)는 보존.
  *   selftest         "이 환경에서 실제로 실행되는가"만 확인하고 TEUM_OK를 찍는다(설치 검증용).
  *
- * 지면: **Claude Code**(`~/.claude/settings.json`)와 **Gemini CLI**(`~/.gemini/antigravity-cli/`).
+ * 지면: **Claude Code**(`~/.claude/settings.json`)와 **Antigravity CLI**(`~/.gemini/antigravity-cli/`).
  *   호스트는 stdin payload가 스스로 밝힌다(`agent_state`가 있으면 Gemini). 설정 플래그 없음.
  *
  * 뷰어빌리티: 광고 1건당 노출 1회. **광고는 대기 중에만 표시되고, 보고되는 표시시간은
@@ -34,7 +34,7 @@ import { spawn, spawnSync } from 'node:child_process';
  * 이 스크립트의 판번호. 서버의 판번호와 다르면 스스로 새 판으로 갈아탄다(아래 selfUpdate).
  * ⚠️ 스크립트를 고칠 때마다 올릴 것 — 안 올리면 갱신이 전파되지 않는다.
  */
-const VERSION = '14';
+const VERSION = '15';
 
 /**
  * 릴리즈 서명 공개키(Ed25519). **자가 갱신은 이 키로 서명된 판만 받는다.**
@@ -76,7 +76,7 @@ const cachePath = join(dir, 'cli.json');
 const scriptPath = join(dir, 'statusline.mjs');
 const settingsPath = join(homedir(), '.claude', 'settings.json');
 /**
- * Gemini CLI(Antigravity) 설정. **키가 `statusLine`(camelCase)이어야 한다** — `statusline`이면
+ * Antigravity CLI 설정. **키가 `statusLine`(camelCase)이어야 한다** — `statusline`이면
  * 조용히 무시된다. 우리 모델에 필요한 걸 이 호스트는 더 잘 준다: payload의 `agent_state`가
  * "지금 기다리는 중"을 직접 알려줘서 **Stop 훅이 필요 없다**(Claude Code에선 훅을 심어야 했다).
  * ⚠️ 대신 타이머 갱신이 없다 — 상태가 바뀔 때만 호출된다(표시시간은 상태 전이 간격으로 잰다).
@@ -219,6 +219,22 @@ function ensureDeviceId(cache) {
 const isOurs = (cmd) =>
   typeof cmd === 'string' && /\.teum[/\\](statusline\.mjs|run\.sh)/.test(cmd);
 
+/**
+ * 어느 호스트에든 우리 상태줄이 심겨 있는가. **읽기만 한다**(설정을 만들지 않는다).
+ *
+ * 아래 "설치 전 맨손 실행" 가드의 두 조건 중 하나다. 파일을 못 읽거나 JSON이 깨져 있으면
+ * **없는 것으로 본다** — 여기서 예외를 던지면 상태줄이 통째로 죽는다(가드가 본체를 죽이는 꼴).
+ */
+function installedAnywhere() {
+  for (const p of [settingsPath, geminiSettingsPath]) {
+    try {
+      if (!existsSync(p)) continue;
+      if (isOurs(JSON.parse(readFileSync(p, 'utf8'))?.statusLine?.command)) return true;
+    } catch { /* 읽을 수 없으면 없는 것으로 */ }
+  }
+  return false;
+}
+
 // ── 상태줄 모드 — 기존 상태줄 위에 "얹기" ────────────────────────────────────
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 const teal = (s) => `\x1b[36m${s}\x1b[0m`;
@@ -285,7 +301,7 @@ function renderAd(ad, doorUrl) {
 /** 얹기: 설치 전에 쓰던 상태줄 명령을 그대로 실행해 첫 줄을 가져온다(그들 것이 먼저, 우리는 뒤에). */
 /**
  * ⚠️ **호스트별로 다른 상태줄을 보존한다.** 예전엔 `prevStatusLine` 하나뿐이라, 두 호스트에
- * 설치하면 Gemini CLI에서 **Claude Code의 상태줄 명령이 실행**됐다(다른 스키마의 stdin을 받고
+ * 설치하면 Antigravity CLI에서 **Claude Code의 상태줄 명령이 실행**됐다(다른 스키마의 stdin을 받고
  * 엉뚱한 줄을 그린다). 키를 호스트별로 나눈다 — 기존 설치는 `prevStatusLine`(claude)로 남아
  * 그대로 동작한다(하위호환).
  */
@@ -671,7 +687,7 @@ function readStopMarker() {
 }
 
 /**
- * Gemini CLI(Antigravity)에서 "지금 기다리는 중"으로 보는 상태.
+ * Antigravity CLI에서 "지금 기다리는 중"으로 보는 상태.
  * payload의 `agent_state`: idle · thinking · working · tool_use · initializing.
  * `initializing`은 기동 중이라 대기가 아니고, `idle`은 응답이 끝난 상태다.
  */
@@ -681,7 +697,7 @@ function parseHostState(rawStdin) {
   try {
     const d = JSON.parse(rawStdin);
     // 🖥️ 호스트 판별 — **payload가 스스로 밝힌다.** 설정 플래그를 따로 두지 않는다(설치 경로가
-    // 어긋나도 안 깨진다). Gemini CLI만 `agent_state`를 싣는다.
+    // 어긋나도 안 깨진다). Antigravity CLI만 `agent_state`를 싣는다.
     const agentState = typeof d?.agent_state === 'string' ? d.agent_state : null;
     return {
       apiMs: Number(d?.cost?.total_api_duration_ms ?? NaN),
@@ -721,6 +737,37 @@ function turnStateOf(cache, sessionId) {
 async function statusline() {
   let rawStdin = '';
   try { rawStdin = readFileSync(0, 'utf8'); } catch { /* stdin 없이 직접 실행 */ }
+
+  /**
+   * 🕳️ **설치되지 않은 채 맨손으로 실행되면 아무것도 만들지 않는다**(2026-08-27).
+   *
+   * 진입부가 `else statusline()`이라 인자 없이 실행해도 상태줄 경로가 그대로 돈다 →
+   * 지갑이 태어나고 광고가 나가고 노출이 찍힌다. **그런데 그 지갑에는 주인이 없다** —
+   * 호스트에 심긴 게 없으니 두 번 다시 실행되지 않는다.
+   *
+   * 실측(2026-08-27): CLI 단독 유저 53명 중 **51명이 하루살이**였고 그중 26명은 10분 안에
+   * 노출 1회만 찍고 영원히 사라졌다. 50명은 서버 접촉이 노출과 **동시에** 끊겼다. 설치를
+   * 대행하는 에이전트가 "이게 뭐 하는 스크립트인지" 한두 번 돌려본 것이 그대로 유저 통계가
+   * 된 것이다. 그 51개가 잔액 14,853원과 노출 340건을 물고 CLI 지표를 통째로 오염시켰다.
+   * ⇒ 이건 리텐션 문제가 아니라 **측정 위생** 문제였다.
+   *
+   * 판별은 **두 조건을 모두** 본다(한쪽만 보면 진짜 설치를 깬다):
+   *   ① stdin이 비어 있다      = 호스트가 부른 게 아니다(호스트는 언제나 JSON을 흘린다)
+   *   ② 어느 settings.json에도 우리 명령이 없다 = 설치된 적이 없다
+   *
+   * ⚠️ 아래 `blind`와 헷갈리지 말 것. 그건 호스트가 **부르긴 했는데** 페이로드를 우리가
+   *    못 알아본 경우라 종전대로 광고를 띄운다(스키마가 바뀌어도 조용히 무광고가 되지 않게).
+   *    여기는 **부른 적이 없는** 경우다. 둘을 한 조건으로 합치면 그 방어가 무너진다.
+   */
+  if (!rawStdin.trim() && !installedAnywhere()) {
+    // 읽는 상대가 사람일 수도, 설치를 대행하는 에이전트일 수도 있다. 둘 다에게 통하는 한 문장.
+    process.stdout.write(
+      `틈틈이 상태줄이 아직 설치되지 않았어요. 설치하려면 \`setup\`을 함께 주세요.\n`
+      + `  설치   node ${scriptPath} setup\n`
+      + `  안내   ${API}/cli\n`,
+    );
+    return;
+  }
 
   const cache = loadCache();
   // 캐시를 못 읽었으면(동시 쓰기와 겹친 찢어진 읽기) **아무것도 하지 않고 조용히 빠진다**.
@@ -774,7 +821,7 @@ async function statusline() {
   const recentWork = newPrompt || dApi > 0;
   const stillInTurn = hasStopSignal ? turnActive : gap < ACTIVE_GAP_MS;
   /**
-   * 🖥️ Gemini CLI: `agent_state`가 곧 답이다. Claude Code에선 종료 시점을 몰라 Stop 훅과
+   * 🖥️ Antigravity CLI: `agent_state`가 곧 답이다. Claude Code에선 종료 시점을 몰라 Stop 훅과
    * 유휴 안전망까지 쌓아야 했는데(그 탑이 위 20여 줄이다), 여기선 호스트가 직접 말해준다.
    * ⇒ 대기 판정이 추정이 아니라 **사실**이 된다.
    */
@@ -926,7 +973,7 @@ function writeSettings(settings, path = settingsPath) {
 }
 
 /**
- * Gemini CLI(Antigravity)에 상태줄을 심는다. **Stop 훅은 심지 않는다** — `agent_state`가
+ * Antigravity CLI에 상태줄을 심는다. **Stop 훅은 심지 않는다** — `agent_state`가
  * 대기 종료를 직접 알려주므로 필요 없고, 남의 설정을 덜 건드릴수록 좋다.
  *
  * `stack_with_default: true` = 호스트 기본 푸터를 **유지한 채** 우리 줄을 얹는다.
@@ -1324,7 +1371,7 @@ async function cmdSetup(code) {
   const hosts = detectHosts();
   if (!hosts.claude && !hosts.gemini) {
     console.error('설치할 곳을 찾지 못했어요.');
-    console.error('   이 기기에서 Claude Code나 Gemini CLI를 찾을 수 없습니다.');
+    console.error('   이 기기에서 Claude Code나 Antigravity CLI를 찾을 수 없습니다.');
     console.error('   둘 중 하나를 먼저 설치하고 한 번 실행한 뒤에 다시 시도해 주세요.');
     process.exit(1);
   }
@@ -1381,7 +1428,7 @@ async function cmdSetup(code) {
   let geminiInstalled = false;
   if (hosts.gemini) {
     try { installGemini(cache, pick.sl); geminiInstalled = true; }
-    catch (e) { console.error('Gemini CLI 설정을 건드리지 못했어요: ' + (e?.message ?? e)); }
+    catch (e) { console.error('Antigravity CLI 설정을 건드리지 못했어요: ' + (e?.message ?? e)); }
   }
   saveCache(cache);
   await reportSetup(geminiInstalled ? 'ok+gemini' : 'ok', cache);
@@ -1396,13 +1443,13 @@ async function cmdSetup(code) {
   console.log('설치됐어요');
   // ⚠️ **실제로 쓴 곳만** 적는다. 종전엔 Claude Code 줄을 무조건 찍어서, 그 도구를 쓰지도 않는
   //    사람에게 거짓을 말하고 있었다(게다가 그 파일을 우리가 만들고 있었다).
-  if (claudeInstalled) console.log(`   Claude Code   ${tildePath(settingsPath)}   상태줄 + Stop 훅`);
-  if (geminiInstalled) console.log(`   Gemini CLI    ${tildePath(geminiSettingsPath)}   상태줄`);
-  else if (hosts.gemini) console.log('   Gemini CLI    설정을 건드리지 못했어요');
+  if (claudeInstalled) console.log(`   Claude Code       ${tildePath(settingsPath)}   상태줄 + Stop 훅`);
+  if (geminiInstalled) console.log(`   Antigravity CLI   ${tildePath(geminiSettingsPath)}   상태줄`);
+  else if (hosts.gemini) console.log('   Antigravity CLI   설정을 건드리지 못했어요');
   console.log('');
   if (cache.prevStatusLine) console.log('   쓰시던 상태줄은 그대로 두고 그 뒤에 광고 한 칸만 얹었어요.');
   console.log('   CLI를 다시 열면 화면 아래 상태줄에 광고 한 줄이 뜨고, 기다리는 동안 적립돼요.');
-  if (geminiInstalled) console.log('   Gemini CLI는 완전히 껐다 켜야 반영돼요.');
+  if (geminiInstalled) console.log('   Antigravity CLI는 완전히 껐다 켜야 반영돼요.');
   // 지갑으로 가는 길은 **명령이 아니라 상태줄의 ⏰**다(비침투: 유저에게 무엇도 시키지 않는다).
   // 여기서 명령을 안내하면 그 순간 "우리 편의를 위해 유저 행동을 바꾸는" 도구가 된다.
   console.log('   상태줄 맨 앞 ⏰ 를 누르면 내 지갑이 열려요(하이퍼링크 지원 터미널).');
@@ -1432,7 +1479,7 @@ function cmdRemove() {
   let g = false;
   try { g = removeGemini(cache); } catch { /* 남의 설정이 깨져 있으면 건드리지 않는다 */ }
   saveCache(cache);
-  console.log(`원복했어요${g ? ' (Claude Code + Gemini CLI)' : ''}. 쓰시던 상태줄로 되돌렸습니다.`);
+  console.log(`원복했어요${g ? ' (Claude Code + Antigravity CLI)' : ''}. 쓰시던 상태줄로 되돌렸습니다.`);
   console.log('   적립 데이터는 ~/.teum 에 남아 있어요. 완전히 지우려면: rm -rf ~/.teum');
 }
 

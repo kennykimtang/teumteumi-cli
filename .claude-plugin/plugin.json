@@ -1,7 +1,7 @@
 {
   "name": "teumteumi",
   "displayName": "틈틈이",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI 응답을 기다리는 동안 상태줄에 광고 한 줄. 그 시간이 지갑에 쌓입니다. 브라우저에서 쓰던 것과 같은 지갑이 이 터미널에서도 열립니다.",
   "author": { "name": "틈틈이", "url": "https://teumteumi.up.railway.app/" },
   "homepage": "https://teumteumi.up.railway.app/",
